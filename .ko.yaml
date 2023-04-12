@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) Furkan Türkal
+
+defaultBaseImage: cgr.dev/chainguard/static:latest

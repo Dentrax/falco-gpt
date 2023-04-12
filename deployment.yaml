@@ -1,0 +1,58 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: falco-gpt
+type: Opaque
+stringData:
+  OPENAI_TOKEN: ${OPENAI_TOKEN}
+  SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: falco-gpt
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: falco-gpt
+  template:
+    metadata:
+      labels:
+        app: falco-gpt
+    spec:
+      containers:
+        - name: falco-gpt
+          image: furkanturkal/falco-gpt@sha256:b52625f4d2f7c6ac5d38290ce5dee110368caaea2fd6e0c8acf774d405bde60f
+          envFrom:
+          - secretRef:
+              name: falco-gpt
+          resources:
+            limits:
+              cpu: "50m"
+              memory: "64Mi"
+          securityContext:
+            runAsNonRoot: true
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - NET_BIND_SERVICE
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 3000
+        fsGroup: 2000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: falco-gpt
+spec:
+  selector:
+    app: falco-gpt
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: 8080
