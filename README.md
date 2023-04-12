@@ -97,7 +97,9 @@ $ go run . <FLAGS>
 
 Your audit log payloads will be sent to OpenAI to generate remediation actions. This project currently does not
 anonymize the audit log payloads. Please be aware of this when using this tool if you are concerned about your sensitive
-data.
+data. Use at your own risk. By using this tool, you agree that you are solely responsible for any and all consequences; and
+that the author(s) of this tool are not liable for any damages or losses of any kind.
+
 
 # License
 
