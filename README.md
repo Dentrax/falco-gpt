@@ -18,6 +18,11 @@
 
 <br />
 
+`falco-gpt` is an OpenAI powered tool to generate remediation actions for Falco audit events. It is a simple HTTP server
+that listens for Falco audit events and pushes them to an in-memory ring buffer in async manner. The event buffer is then
+processed by a goroutine that sends the audit events to OpenAI API by applying rate limiting and retries. The generated
+remediation actions are then sent to Slack via a webhook.
+
 # Screenshots
 
 ![output-slack-1](./.res/output-slack-1.png)
@@ -27,6 +32,15 @@
 ![output-slack-3](./.res/output-slack-3.png)
 
 ![output-slack-4](./.res/output-slack-4.png)
+
+# Features
+
+* OpenAI powered
+* Async processing
+* Resiliency with retries
+* Rate limiting (queries per hour)
+* Custom prompt template
+* Limitation: Only Slack support for demo purposes
 
 # High Level Overview
 
@@ -89,6 +103,7 @@ furkanturkal/falco-gpt:latest
 ```
 
 ### Kubernetes
+
 ```bash
 envsubst < deployment.yaml | kubectl apply -n falco -f -
 ```
@@ -116,9 +131,9 @@ $ go run . <FLAGS>
 
 Your audit log payloads will be sent to OpenAI to generate remediation actions. This project currently does not
 anonymize the audit log payloads. Please be aware of this when using this tool if you are concerned about your sensitive
-data. Use at your own risk. By using this tool, you agree that you are solely responsible for any and all consequences; and
+data. Use at your own risk. By using this tool, you agree that you are solely responsible for any and all consequences;
+and
 that the author(s) of this tool are not liable for any damages or losses of any kind.
-
 
 # License
 
