@@ -4,7 +4,7 @@
 
 <div align="center">
  <strong>
-   `falco-gpt` is an OpenAI powered tool to generate remediation actions for Falco audit events
+   falco-gpt is an OpenAI powered tool to generate remediation actions for Falco audit events
  </strong>
 </div>
 
@@ -71,7 +71,7 @@ helm upgrade --install falco falcosecurity/falco --namespace falco --create-name
 ## Deploy to Kubernetes
 
 ```bash
-envsubst < deployment.yaml | kubectl apply -f -
+envsubst < deployment.yaml | kubectl apply -n falco -f -
 ```
 
 # Usage
@@ -93,10 +93,17 @@ $ go run . <FLAGS>
     path custom template file to use for the ChatGPT
 ```
 
+# Disclaimer
+
+Your audit log payloads will be sent to OpenAI to generate remediation actions. This project currently does not
+anonymize the audit log payloads. Please be aware of this when using this tool if you are concerned about your sensitive
+data.
+
 # License
 
 *falco-gpt* was created by [Furkan 'Dentrax' Türkal](https://twitter.com/furkanturkaI)
 
-The base project code is licensed under [MIT](https://opensource.org/licenses/MIT) unless otherwise specified. Please see the **[LICENSE](https://github.com/Dentrax/falco-gpt/blob/main/LICENSE)** file for more information.
+The base project code is licensed under [MIT](https://opensource.org/licenses/MIT) unless otherwise specified. Please
+see the **[LICENSE](https://github.com/Dentrax/falco-gpt/blob/main/LICENSE)** file for more information.
 
 <kbd>Best Regards</kbd>
