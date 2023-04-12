@@ -68,8 +68,27 @@ helm upgrade --install falco falcosecurity/falco --namespace falco --create-name
   --set falco.http_output.url=http://falco-gpt:8080
 ```
 
-## Deploy to Kubernetes
+## Build
 
+### Build with [go](https://golang.org/)
+
+```bash
+go build .
+```
+
+### Build with [ko](https://github.com/ko-build/ko/)
+
+```bash
+KO_DOCKER_REPO=<REGISTRY> LDFLAGS="-s -w" ko publish -B --platform=linux/amd64 --tags latest --push=true .
+````
+
+## Deployment
+
+```bash
+furkanturkal/falco-gpt:latest
+```
+
+### Kubernetes
 ```bash
 envsubst < deployment.yaml | kubectl apply -n falco -f -
 ```
