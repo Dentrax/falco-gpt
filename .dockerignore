@@ -1,0 +1,13 @@
+# Ignore everything
+*
+
+# But not these files...
+!*.go
+!go.sum
+!go.mod
+
+!README.md
+!LICENSE
+
+# ...even if they are in subdirectories
+!*/
