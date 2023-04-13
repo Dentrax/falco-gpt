@@ -98,6 +98,7 @@ KO_DOCKER_REPO=<REGISTRY> LDFLAGS="-s -w" ko publish -B --platform=linux/amd64 -
 
 ## Deployment
 
+Container Image:
 ```bash
 furkanturkal/falco-gpt:latest
 ```
