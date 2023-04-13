@@ -1,4 +1,4 @@
-module falco-gpt
+module github.com/Dentrax/falco-gpt
 
 go 1.20
 
