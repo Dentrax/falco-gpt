@@ -1,4 +1,4 @@
-<p align="center"><a href="https://github.com/Dentrax/falco-gpt" target="_blank"><img height="128" src="https://raw.githubusercontent.com/Dentrax/falco-gpt/main/.res/falco.png"></a></p>
+<p align="center"><a href="https://github.com/Dentrax/falco-gpt" target="_blank"><img height="128" src="https://raw.githubusercontent.com/cncf/artwork/b4216a91b2c1976c2e7fd25f62ee4d3b2126b4a6/projects/falco/icon/color/falco-icon-color.png"></a></p>
 
 <h1 align="center">falco-gpt</h1>
 
