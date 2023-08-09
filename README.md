@@ -19,19 +19,13 @@
 <br />
 
 `falco-gpt` is an OpenAI powered tool to generate remediation actions for Falco audit events. It is a simple HTTP server
-that listens for Falco audit events and pushes them to an in-memory ring buffer in async manner. The event buffer is then
+that listens for Falco audit events and pushes them to an internal NATS server acting like a queue. The queue is then
 processed by a goroutine that sends the audit events to OpenAI API by applying rate limiting and retries. The generated
-remediation actions are then sent to Slack via a webhook.
+remediation actions are then sent to Slack via a BOT in a thread.
 
 # Screenshots
 
-![output-slack-1](./.res/output-slack-1.png)
-
-![output-slack-2](./.res/output-slack-2.png)
-
-![output-slack-3](./.res/output-slack-3.png)
-
-![output-slack-4](./.res/output-slack-4.png)
+![output-slack-4](./.res/output-slack-5.png)
 
 # Features
 
@@ -57,7 +51,7 @@ remediation actions are then sent to Slack via a webhook.
 |(http_output)|    [POST]     | |   (:8080)   |Buffer |    Queue    |  +----------+  |
 |             |               | |             |       |  Processor  |  |          |  |
 +-------------+               | +-------------+       +------+------+  |  Slack   |  |
-                              |                              |         | Webhook  |  |
+                              |                              |         |   BOT    |  |
                               |                              +-------->|          |  |
                               |                                        +----------+  |
                               |                                                      |
@@ -70,8 +64,8 @@ remediation actions are then sent to Slack via a webhook.
 
 1. Export the following environment variables:
 
-- [$OPENAI_TOKEN](https://platform.openai.com/account/api-keys)
-- [$SLACK_WEBHOOK_URL](https://api.slack.com/messaging/webhooks)
+- [OPENAI_TOKEN](https://platform.openai.com/account/api-keys)
+- [SLACK_TOKEN](https://api.slack.com/authentication/token-types#bot)
 
 2. [Falco](https://falco.org/docs/getting-started/installation/) with `http_output` enabled:
 
@@ -114,18 +108,20 @@ envsubst < deployment.yaml | kubectl apply -n falco -f -
 ```bash
 $ go run . <FLAGS>
 
--buffer int
-    falco log buffer size (default 1000)
--min-priority string
-    minimum priority to analyse (default "warning")
--model string
-    Backend AI model (default "gpt-3.5-turbo")
--port int
-    port to listen on (default 8080)
--qps int
-    queries per HOUR to OpenAI and Slack (default 10)
--template-file string
-    path custom template file to use for the ChatGPT
+  -channel string
+        Slack channel
+  -ignore int
+        Ignore events in queue older than X hour(s) (default 1)
+  -min-priority string
+        minimum priority to analyse (default "warning")
+  -model string
+        Backend AI model (default "gpt-3.5-turbo")
+  -port int
+        port to listen on (default 8080)
+  -qps int
+        max queries per HOUR to OpenAI (default 10)
+  -template-file string
+        path custom template file to use for the ChatGPT
 ```
 
 # Disclaimer

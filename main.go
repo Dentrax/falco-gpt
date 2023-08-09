@@ -4,7 +4,6 @@
 package main
 
 import (
-	"container/ring"
 	"context"
 	"encoding/json"
 	"flag"
@@ -15,52 +14,94 @@ import (
 	"os"
 	"time"
 
+	"github.com/Dentrax/falco-gpt/pkg/model"
+	"github.com/Dentrax/falco-gpt/pkg/openai"
+	"github.com/Dentrax/falco-gpt/pkg/slack"
 	"github.com/avast/retry-go"
-	"github.com/slack-go/slack"
 	"golang.org/x/time/rate"
+
+	natsserver "github.com/nats-io/nats-server/v2/server"
+	natsgo "github.com/nats-io/nats.go"
 )
+
+var (
+	natsClient   *natsgo.Conn
+	limiter      *rate.Limiter
+	slackClient  *slack.Client
+	openaiClient *openai.Client
+	minPriority  string
+	ctx          context.Context
+	older        float64
+)
+
+func init() {
+	ctx = context.Background()
+}
 
 func main() {
 	flagPort := flag.Int("port", 8080, "port to listen on")
-	flagBuffer := flag.Int("buffer", 1000, "falco log buffer size")
-	flagQPS := flag.Int("qps", 10, "queries per HOUR to OpenAI and Slack")
-	flagTemplateFile := flag.String("template-file", "", "path custom template file to use for the ChatGPT")
+	flagChannel := flag.String("channel", "", "Slack channel")
+	flagQPH := flag.Int("qps", 10, "max queries per HOUR to OpenAI")
 	flagMinPriority := flag.String("min-priority", "warning", "minimum priority to analyse")
 	flagGPTModel := flag.String("model", "gpt-3.5-turbo", "Backend AI model")
+	flatIgnoreOlder := flag.Int("ignore", 1, "Ignore events in queue older than X hour(s)")
+	flagTemplateFile := flag.String("template-file", "", "path custom template file to use for the ChatGPT")
 	flag.Parse()
 
-	token := os.Getenv("OPENAI_TOKEN")
-	if token == "" {
-		log.Fatal("$OPENAI_TOKEN is not set")
+	minPriority = *flagMinPriority
+
+	if *flagChannel == "" {
+		log.Fatal("Please specify slack channel")
 	}
 
-	webhook := os.Getenv("SLACK_WEBHOOK_URL")
-	if webhook == "" {
-		log.Fatal("$SLACK_WEBHOOK_URL is not set")
+	slackToken := os.Getenv("SLACK_TOKEN")
+	if slackToken == "" {
+		log.Fatal("SLACK_TOKEN is not set")
 	}
+	slackClient, _ = slack.NewClient(*flagChannel, slackToken)
+
+	openaiToken := os.Getenv("OPENAI_TOKEN")
+	if openaiToken == "" {
+		log.Fatal("OPENAI_TOKEN is not set")
+	}
+
+	older = float64(*flatIgnoreOlder)
 
 	// client is the OpenAI client for the ChatGPT.
-	client, err := NewOpenAIClient(os.Getenv("OPENAI_TOKEN"), *flagGPTModel, *flagTemplateFile)
+	var err error
+	openaiClient, err = openai.NewClient(openaiToken, *flagGPTModel, *flagTemplateFile)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// Inflight queue is a ring buffer to prevent the consecutive requests to the API.
-	// bufferSize is the size of the inflight ring buffer.
-	inflightQueue := ring.New(*flagBuffer)
-
 	// Set up a rate limiter in order to not exceed the API rate limit.
-	limiter := rate.NewLimiter(rate.Every(time.Hour), *flagQPS)
+	limiter = rate.NewLimiter(rate.Every(time.Hour), *flagQPH)
 
-	go processQueue(client, inflightQueue, limiter)
+	// Initialize nats server with options
+	ns, err := natsserver.NewServer(&natsserver.Options{})
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer ns.Shutdown()
+	go ns.Start()
+	if !ns.ReadyForConnections(5 * time.Second) {
+		log.Fatal("NATS server not ready")
+	}
+	natsClient, err = natsgo.Connect(ns.ClientURL())
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer natsClient.Close()
 
-	http.HandleFunc("/", handler(inflightQueue, *flagMinPriority))
+	go subscribeQueue()
+
+	http.HandleFunc("/", handler())
 
 	log.Printf("Listening on port %d", *flagPort)
 	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", *flagPort), nil))
 }
 
-func handler(queue *ring.Ring, minPriority string) func(http.ResponseWriter, *http.Request) {
+func handler() func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			w.WriteHeader(http.StatusMethodNotAllowed)
@@ -82,7 +123,7 @@ func handler(queue *ring.Ring, minPriority string) func(http.ResponseWriter, *ht
 				return
 			}
 
-			var payload FalcoPayload
+			var payload model.FalcoPayload
 			if err := json.Unmarshal(body, &payload); err != nil {
 				w.WriteHeader(http.StatusUnprocessableEntity)
 				w.Write([]byte(err.Error()))
@@ -90,14 +131,24 @@ func handler(queue *ring.Ring, minPriority string) func(http.ResponseWriter, *ht
 			}
 			payload.Raw = string(body)
 
+			if payload.Source == "" {
+				payload.Source = "syscalls"
+			}
+
 			// Put the payload onto the inflight queue for processing
 			// if the priority is high enough.
-			if ToPriority(payload.Priority) >= ToPriority(minPriority) {
-				queue.Value = payload
-				queue = queue.Next()
-
+			if model.ToPriority(payload.Priority) >= model.ToPriority(minPriority) {
+				attachment := slack.NewAttachment(payload)
+				payload.ThreadTS, err = slackClient.SendMessage(payload.Output, attachment, "")
+				if err != nil {
+					w.WriteHeader(http.StatusServiceUnavailable)
+					w.Write([]byte(err.Error()))
+					return
+				}
+				msg, _ := json.Marshal(payload)
+				natsClient.Publish("falco", msg)
 				// We return 200 OK to the client, but this does NOT
-				// mean that the request has been processed.
+				// mean that the request has been processed by OpenAI yet.
 				w.WriteHeader(http.StatusCreated)
 				return
 			}
@@ -108,78 +159,58 @@ func handler(queue *ring.Ring, minPriority string) func(http.ResponseWriter, *ht
 }
 
 // processQueue is a goroutine that processes entries from the queue.
-func processQueue(client *OpenAIClient, queue *ring.Ring, limiter *rate.Limiter) {
-	for {
-		entry := queue.Value
-		if entry == nil {
-			// If there are no events to process, cool down for a bit.
-			time.Sleep(1 * time.Second)
-			continue
+func subscribeQueue() {
+	natsClient.Subscribe("falco", func(msg *natsgo.Msg) {
+		// Print message data
+		// Wait for the rate limiter.
+		var payload model.FalcoPayload
+		if err := json.Unmarshal(msg.Data, &payload); err != nil {
+			log.Println(err)
+			return
+		}
+		if time.Since(payload.Time).Hours() > older {
+			return
 		}
 
-		payload, ok := entry.(FalcoPayload)
-		if !ok {
-			log.Println("unprocessable entry", entry)
-			continue
+		if err := limiter.Wait(ctx); err != nil {
+			return
 		}
 
-		if err := process(context.Background(), client, limiter, payload); err != nil {
-			continue
+		// Print the payload to stdout.
+		truncatedPayload := payload
+		truncatedPayload.Raw = ""
+		truncatedPayload.ThreadTS = ""
+		truncatedPayload.Channel = ""
+		p, _ := json.Marshal(truncatedPayload)
+		log.Printf("processing payload: %#v\n", string(p))
+		if response, err := analyze(ctx, payload.Raw); err != nil {
+			log.Println(fmt.Errorf("error process: %w", err))
+			return
+		} else {
+			slackClient.SendMessage(response, nil, payload.ThreadTS)
 		}
-
-		// Remove the payload from the queue if it has been processed successfully.
-		queue.Value = nil
-		queue = queue.Next()
-	}
-}
-
-// process processes the given payload.
-func process(ctx context.Context, client *OpenAIClient, limiter *rate.Limiter, payload FalcoPayload) error {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-
-	// Wait for the rate limiter.
-	if err := limiter.Wait(ctx); err != nil {
-		return err
-	}
-
-	// Print the payload to stdout.
-	log.Printf("processing payload: %s\n", payload)
-
-	if err := analyze(ctx, client, payload); err != nil {
-		log.Println(fmt.Errorf("process: %w", err))
-		return err
-	}
-
-	return nil
+	})
 }
 
 // analyze analyzes the given payload with ChatGPT and posts the response to Slack.
-func analyze(ctx context.Context, client *OpenAIClient, payload FalcoPayload) error {
+func analyze(ctx context.Context, prompt string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	var response string
 
 	if err := do(func() error {
-		// TODO: Generate unique ID for the payload and upsert it to the in-mem cache to avoid unnecessary API calls.
-		resp, err := client.GetCompletion(ctx, payload.Raw)
+		var err error
+		response, err = openaiClient.GetCompletion(ctx, prompt)
 		if err != nil {
 			return err
 		}
-		response = resp
 		return nil
 	}); err != nil {
-		return fmt.Errorf("get completion: %w", err)
+		return "", fmt.Errorf("get completion: %w", err)
 	}
 
-	if err := do(func() error {
-		return slack.PostWebhookContext(ctx, os.Getenv("SLACK_WEBHOOK_URL"), newSlackWebhookMessage(payload, response))
-	}); err != nil {
-		return fmt.Errorf("post to Slack: %w", err)
-	}
-
-	return nil
+	return response, nil
 }
 
 // do is a wrapper around retry.Do that retry the given function.
