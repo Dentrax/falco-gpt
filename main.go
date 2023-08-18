@@ -139,16 +139,14 @@ func handler() func(http.ResponseWriter, *http.Request) {
 			// Put the payload onto the inflight queue for processing
 			// if the priority is high enough.
 			if model.ToPriority(payload.Priority) >= model.ToPriority(minPriority) {
+				msg, err := json.Marshal(payload)
+				if err != nil {
+					w.WriteHeader(http.StatusUnprocessableEntity)
+					w.Write([]byte(err.Error()))
+					return
+				}
 				if err := do(func() error {
-					msg, err := json.Marshal(payload)
-					if err != nil {
-						return err
-					}
-					err = natsClient.Publish("slack", msg)
-					if err != nil {
-						return err
-					}
-					return nil
+					return natsClient.Publish("slack", msg)
 				}); err != nil {
 					w.WriteHeader(http.StatusServiceUnavailable)
 					w.Write([]byte(err.Error()))
