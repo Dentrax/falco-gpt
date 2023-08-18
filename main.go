@@ -41,10 +41,10 @@ func init() {
 func main() {
 	flagPort := flag.Int("port", 8080, "port to listen on")
 	flagChannel := flag.String("channel", "", "Slack channel")
-	flagQPH := flag.Int("qps", 10, "max queries per HOUR to OpenAI")
+	flagQPH := flag.Int("qph", 10, "max queries per HOUR to OpenAI")
 	flagMinPriority := flag.String("min-priority", "warning", "minimum priority to analyse")
 	flagGPTModel := flag.String("model", "gpt-3.5-turbo", "Backend AI model")
-	flatIgnoreOlder := flag.Int("ignore", 1, "Ignore events in queue older than X hour(s)")
+	flatIgnoreOlder := flag.Int("ignore-older", 1, "Ignore events in queue older than X hour(s)")
 	flagTemplateFile := flag.String("template-file", "", "path custom template file to use for the ChatGPT")
 	flag.Parse()
 
@@ -93,7 +93,8 @@ func main() {
 	}
 	defer natsClient.Close()
 
-	go subscribeQueue()
+	go subscribeSlackQueue()
+	go subscribeGPTQueue()
 
 	http.HandleFunc("/", handler())
 
@@ -138,29 +139,32 @@ func handler() func(http.ResponseWriter, *http.Request) {
 			// Put the payload onto the inflight queue for processing
 			// if the priority is high enough.
 			if model.ToPriority(payload.Priority) >= model.ToPriority(minPriority) {
-				attachment := slack.NewAttachment(payload)
-				payload.ThreadTS, err = slackClient.SendMessage(payload.Output, attachment, "")
-				if err != nil {
+				if err := do(func() error {
+					msg, err := json.Marshal(payload)
+					if err != nil {
+						return err
+					}
+					err = natsClient.Publish("slack", msg)
+					if err != nil {
+						return err
+					}
+					return nil
+				}); err != nil {
 					w.WriteHeader(http.StatusServiceUnavailable)
 					w.Write([]byte(err.Error()))
 					return
 				}
-				msg, _ := json.Marshal(payload)
-				natsClient.Publish("falco", msg)
-				// We return 200 OK to the client, but this does NOT
-				// mean that the request has been processed by OpenAI yet.
 				w.WriteHeader(http.StatusCreated)
 				return
 			}
 		}
-
 		w.WriteHeader(http.StatusNoContent)
 	}
 }
 
-// processQueue is a goroutine that processes entries from the queue.
-func subscribeQueue() {
-	natsClient.Subscribe("falco", func(msg *natsgo.Msg) {
+// processGPTQueue is a goroutine that processes entries from the queue for ChatGPT.
+func subscribeGPTQueue() {
+	natsClient.Subscribe("gpt", func(msg *natsgo.Msg) {
 		// Print message data
 		// Wait for the rate limiter.
 		var payload model.FalcoPayload
@@ -187,7 +191,51 @@ func subscribeQueue() {
 			log.Println(fmt.Errorf("error process: %w", err))
 			return
 		} else {
-			slackClient.SendMessage(response, nil, payload.ThreadTS)
+			if err := do(func() error {
+				_, err := slackClient.SendMessage(response, nil, payload.ThreadTS)
+				if err != nil {
+					return err
+				}
+				return nil
+			}); err != nil {
+				log.Println(fmt.Errorf("slack error: %w", err))
+				return
+			}
+
+		}
+	})
+}
+
+// processSlackQueue is a goroutine that processes entries from the queue for Slack.
+func subscribeSlackQueue() {
+	natsClient.Subscribe("slack", func(msg *natsgo.Msg) {
+		var payload model.FalcoPayload
+		if err := json.Unmarshal(msg.Data, &payload); err != nil {
+			log.Println(fmt.Errorf("error process: %w", err))
+			return
+		}
+		if err := do(func() error {
+			attachment := slack.NewAttachment(payload)
+			var err error
+			payload.ThreadTS, err = slackClient.SendMessage(payload.Output, attachment, "")
+			if err != nil {
+				return err
+			}
+			return nil
+		}); err != nil {
+			log.Println(fmt.Errorf("slack error: %w", err))
+			return
+		}
+		p, err := json.Marshal(payload)
+		if err != nil {
+			log.Println(fmt.Errorf("error process: %w", err))
+			return
+		}
+		if err := do(func() error {
+			return natsClient.Publish("gpt", p)
+		}); err != nil {
+			log.Println(fmt.Errorf("nats error: %w", err))
+			return
 		}
 	})
 }

@@ -110,7 +110,7 @@ $ go run . <FLAGS>
 
   -channel string
         Slack channel
-  -ignore int
+  -ignore-older int
         Ignore events in queue older than X hour(s) (default 1)
   -min-priority string
         minimum priority to analyse (default "warning")
@@ -118,7 +118,7 @@ $ go run . <FLAGS>
         Backend AI model (default "gpt-3.5-turbo")
   -port int
         port to listen on (default 8080)
-  -qps int
+  -qph int
         max queries per HOUR to OpenAI (default 10)
   -template-file string
         path custom template file to use for the ChatGPT
