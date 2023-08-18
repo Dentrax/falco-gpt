@@ -212,8 +212,8 @@ func subscribeSlackQueue() {
 			log.Println(fmt.Errorf("error process: %w", err))
 			return
 		}
+		attachment := slack.NewAttachment(payload)
 		if err := do(func() error {
-			attachment := slack.NewAttachment(payload)
 			var err error
 			payload.ThreadTS, err = slackClient.SendMessage(payload.Output, attachment, "")
 			if err != nil {
