@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) Furkan Türkal
 
-package main
+package openai
 
 import (
 	"context"
 	"fmt"
 	"os"
 
-	"github.com/sashabaranov/go-openai"
+	openaisdk "github.com/sashabaranov/go-openai"
 )
 
 const (
@@ -25,32 +25,46 @@ Your JSON input is:
 `
 )
 
-// OpenAIClient is the client for OpenAI API.
-type OpenAIClient struct {
-	client       *openai.Client
+var (
+	client *Client
+)
+
+// Client is the client for OpenAI API.
+type Client struct {
+	client       *openaisdk.Client
 	model        string
 	templateFile string
 }
 
-// NewOpenAIClient initializes the OpenAI client.
-func NewOpenAIClient(token, model, templateFile string) (*OpenAIClient, error) {
-	client := openai.NewClient(token)
-	if client == nil {
-		return nil, fmt.Errorf("error creating OpenAI client")
-	}
-	return &OpenAIClient{
-		client:       client,
-		model:        model,
-		templateFile: templateFile,
-	}, nil
+func init() {
+	client = new(Client)
 }
 
-// GetTemplate returns the template for the prompt. If the template file is not
+// NewClient initializes the OpenAI client.
+func NewClient(token, model, templateFile string) (*Client, error) {
+	c := openaisdk.NewClient(token)
+	if c == nil {
+		return nil, fmt.Errorf("error creating OpenAI client")
+	}
+
+	client.client = c
+	client.model = model
+	client.templateFile = getTemplate(templateFile)
+
+	return client, nil
+}
+
+// GetClient retrieves the OpenAI client
+func GetClient() *Client {
+	return client
+}
+
+// getTemplate returns the template for the prompt. If the template file is not
 // specified, the default template is returned.
-func (c *OpenAIClient) GetTemplate() string {
+func getTemplate(f string) string {
 	// open file and sprintf
-	if c.templateFile != "" {
-		bytes, err := os.ReadFile(c.templateFile)
+	if f != "" {
+		bytes, err := os.ReadFile(f)
 		if err != nil {
 			panic(fmt.Errorf("read template file: %w", err))
 		}
@@ -60,14 +74,14 @@ func (c *OpenAIClient) GetTemplate() string {
 }
 
 // GetCompletion returns the completion from OpenAI API for the given prompt.
-func (c *OpenAIClient) GetCompletion(ctx context.Context, prompt string) (string, error) {
-	resp, err := c.client.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
+func (c *Client) GetCompletion(ctx context.Context, prompt string) (string, error) {
+	resp, err := c.client.CreateChatCompletion(ctx, openaisdk.ChatCompletionRequest{
 		Model:       c.model,
 		Temperature: 0, // To make the output deterministic.
-		Messages: []openai.ChatCompletionMessage{
+		Messages: []openaisdk.ChatCompletionMessage{
 			{
 				Role:    "user",
-				Content: fmt.Sprintf(c.GetTemplate(), prompt),
+				Content: fmt.Sprintf(c.templateFile, prompt),
 			},
 		},
 	})
